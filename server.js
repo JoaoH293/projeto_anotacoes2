@@ -1,82 +1,68 @@
 const express = require('express');
 const path = require('path');
-const sqlite3 = require('sqlite3');
-const { open } = require('sqlite');
+const { Pool } = require('pg'); // Importa o driver do Postgres
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-let db;
-
-// Função de inicialização
-(async () => {
-    try {
-        // Define o caminho do banco de dados na mesma pasta do servidor
-        const dbPath = path.resolve(__dirname, 'database.db');
-        console.log("--- DEBUG ---");
-        console.log("Pasta do projeto:", __dirname);
-        console.log("Arquivo de banco:", dbPath);
-
-        db = await open({
-            filename: dbPath,
-            driver: sqlite3.Database
-        });
-
-        await db.exec(`
-            CREATE TABLE IF NOT EXISTS registros (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo TEXT,
-                titulo TEXT,
-                subtitulo TEXT,
-                conteudo TEXT,
-                data DATETIME DEFAULT (datetime('now', 'localtime'))
-            )
-        `);
-        console.log("✅ BANCO DE DADOS: PRONTO");
-        console.log("--- SERVIDOR RODANDO EM http://localhost:3000 ---");
-    } catch (err) {
-        console.log("❌ ERRO AO INICIAR:", err.message);
-    }
-})();
-
-// Rotas
-app.get('/api/registros', async (req, res) => {
-    try {
-        const rows = await db.all('SELECT * FROM registros ORDER BY id DESC');
-        res.json(rows);
-    } catch (err) {
-        console.log("❌ Erro na Busca:", err.message);
-        res.status(500).json({ erro: err.message });
-    }
+// Configuração da conexão com o Neon.tech
+// Na Render, usaremos uma variável de ambiente por segurança
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'SUA_URL_DO_NEON_AQUI',
+  ssl: { rejectUnauthorized: false } // Necessário para conexões seguras na nuvem
 });
 
-app.post('/api/salvar', async (req, res) => {
-    try {
-        const { id, tipo, titulo, subtitulo, conteudo } = req.body;
+// Criar a tabela no Postgres (SQL levemente diferente)
+async function initDb() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS registros (
+        id SERIAL PRIMARY KEY,
+        tipo TEXT,
+        titulo TEXT,
+        subtitulo TEXT,
+        conteudo TEXT,
+        data TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Banco PostgreSQL pronto!");
+  } catch (err) {
+    console.error("❌ Erro ao iniciar Postgres:", err.message);
+  }
+}
+initDb();
 
-        if (id) {
-            // Se já existe um ID, atualizamos o registro existente
-            await db.run(
-                'UPDATE registros SET tipo = ?, titulo = ?, subtitulo = ?, conteudo = ? WHERE id = ?',
-                [tipo, titulo, subtitulo, conteudo, id]
-            );
-            console.log(`✅ Registro ${id} atualizado.`);
-        } else {
-            // Se não tem ID, criamos um novo
-            await db.run(
-                'INSERT INTO registros (tipo, titulo, subtitulo, conteudo) VALUES (?, ?, ?, ?)',
-                [tipo, titulo, subtitulo, conteudo]
-            );
-            console.log(`✅ Novo registro criado.`);
-        }
-        
-        res.status(200).json({ status: "sucesso" });
-    } catch (err) {
-        console.error("Erro no servidor:", err.message);
-        res.status(500).json({ erro: err.message });
+// Rota para Buscar
+app.get('/api/registros', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM registros ORDER BY id DESC');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Rota para Salvar ou Editar
+app.post('/api/salvar', async (req, res) => {
+  const { id, tipo, titulo, subtitulo, conteudo } = req.body;
+  try {
+    if (id) {
+      await pool.query(
+        'UPDATE registros SET tipo=$1, titulo=$2, subtitulo=$3, conteudo=$4 WHERE id=$5',
+        [tipo, titulo, subtitulo, conteudo, id]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO registros (tipo, titulo, subtitulo, conteudo) VALUES ($1, $2, $3, $4)',
+        [tipo, titulo, subtitulo, conteudo]
+      );
     }
+    res.json({ status: "sucesso" });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor na porta ${PORT}`));
