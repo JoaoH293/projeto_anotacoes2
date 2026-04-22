@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>TeoNotes Pro - Gestão Teológica</title>
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        :root { --primary: #1a252f; --accent: #b8860b; --bg: #f8f9fa; }
+        body { font-family: 'Georgia', serif; background: var(--bg); display: flex; margin: 0; }
+        
+        nav { width: 260px; background: var(--primary); color: white; height: 100vh; position: fixed; padding: 20px; }
+        nav h2 { color: var(--accent); text-align: center; border-bottom: 1px solid #34495e; padding-bottom: 15px; }
+        
+        .nav-btn { width: 100%; padding: 12px; margin: 8px 0; background: none; border: 1px solid #34495e; color: white; cursor: pointer; text-align: left; transition: 0.3s; }
+        .nav-btn:hover { background: var(--accent); }
+
+        main { margin-left: 300px; padding: 40px; width: calc(100% - 340px); }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+        
+        input { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        
+        /* Estilo do Editor */
+        #editor-container { height: 350px; margin-bottom: 20px; }
+        .actions { display: flex; gap: 10px; margin-top: 20px; }
+        
+        .btn-save { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; }
+        .btn-pdf { background: #c0392b; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; }
+        
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<nav>
+    <h2>TeoNotes</h2>
+    <button class="nav-btn" onclick="switchTab('aula')">📓 Nova Aula</button>
+    <button class="nav-btn" onclick="switchTab('sermao')">📜 Novo Sermão</button>
+    <hr style="border: 0.5px solid #34495e; margin: 20px 0;">
+    <div id="historico">
+        <small style="color: #7f8c8d;">REGISTROS SALVOS</small>
+        </div>
+</nav>
+
+<main>
+    <div class="container">
+        <h1 id="main-title">Anotação de Aula</h1>
+        
+        <div id="fields-aula">
+            <input type="text" id="titulo-aula" placeholder="Matéria / Disciplina">
+            <input type="text" id="professor" placeholder="Professor Responsável">
+        </div>
+
+        <div id="fields-sermao" class="hidden">
+            <input type="text" id="tema-sermao" placeholder="Tema do Sermão">
+            <input type="text" id="texto-biblico" placeholder="Referência Bíblica (Ex: Romanos 8:1)">
+        </div>
+
+        <div id="editor-container"></div>
+
+        <div class="actions">
+            <button class="btn-save" onclick="salvarDados()">Salvar no Sistema</button>
+            <button class="btn-pdf" onclick="exportarPDF()">Gerar PDF Formatado</button>
+        </div>
+    </div>
+</main>
+
+<script>
+    // Inicializar Editor Quill
+    var quill = new Quill('#editor-container', {
+        theme: 'snow',
+        modules: {
+            toolbar: [
+                ['bold', 'italic', 'underline'],
+                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                [{ 'header': [1, 2, false] }],
+                ['clean']
+            ]
+        }
+    });
+
+    let currentMode = 'aula';
+
+    function switchTab(mode) {
+        currentMode = mode;
+        document.getElementById('main-title').innerText = mode === 'aula' ? 'Anotação de Aula' : 'Estrutura de Sermão';
+        document.getElementById('fields-aula').classList.toggle('hidden', mode !== 'aula');
+        document.getElementById('fields-sermao').classList.toggle('hidden', mode !== 'sermao');
+        quill.setContents([]); // Limpa o editor
+    }
+
+    // Lógica do "Backend" (LocalStorage simulando DB)
+    let idAtual = null; // Variável para saber se estamos editando ou criando
+
+// Função para carregar uma anotação específica no editor
+async function abrirAnotacao(id) {
+    try {
+        const response = await fetch('/api/registros');
+        const registros = await response.json();
+        const nota = registros.find(r => r.id === id);
+
+        if (nota) {
+            idAtual = nota.id;
+            switchTab(nota.tipo); // Muda para a aba correta (aula ou sermão)
+            
+            // Preenche os campos
+            if (nota.tipo === 'aula') {
+                document.getElementById('titulo-aula').value = nota.titulo;
+                document.getElementById('professor').value = nota.subtitulo;
+            } else {
+                document.getElementById('tema-sermao').value = nota.titulo;
+                document.getElementById('texto-biblico').value = nota.subtitulo;
+            }
+            
+            // Coloca o conteúdo formatado (negrito/itálico) no editor
+            quill.root.innerHTML = nota.conteudo;
+            document.getElementById('main-title').innerText = "Editando: " + nota.titulo;
+        }
+    } catch (error) {
+        console.error("Erro ao abrir:", error);
+    }
+}
+
+async function salvarDados() {
+    const dados = {
+        id: idAtual, // Se for null, o servidor cria um novo. Se tiver ID, ele atualiza.
+        tipo: currentMode,
+        titulo: currentMode === 'aula' ? document.getElementById('titulo-aula').value : document.getElementById('tema-sermao').value,
+        subtitulo: currentMode === 'aula' ? document.getElementById('professor').value : document.getElementById('texto-biblico').value,
+        conteudo: quill.root.innerHTML
+    };
+
+    try {
+        const response = await fetch('/api/salvar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dados)
+        });
+
+        if (response.ok) {
+            alert(idAtual ? "Alterações salvas!" : "Novo registro salvo!");
+            idAtual = null; // Reseta após salvar
+            location.reload(); // Recarrega para atualizar a lista
+        }
+    } catch (error) {
+        alert("Erro ao salvar no banco.");
+    }
+}
+
+async function carregarHistorico() {
+    const lista = document.getElementById('historico');
+    try {
+        const response = await fetch('/api/registros');
+        const dados = await response.json();
+        
+        lista.innerHTML = '<small style="color: #7f8c8d;">REGISTROS (Clique para editar)</small><br>';
+        
+        dados.forEach(reg => {
+            const div = document.createElement('div');
+            div.className = "nav-btn"; // Reutiliza o estilo de botão
+            div.style.fontSize = "12px";
+            div.style.marginBottom = "5px";
+            div.style.cursor = "pointer";
+            div.onclick = () => abrirAnotacao(reg.id);
+            
+            div.innerHTML = `
+                <strong>${reg.tipo.toUpperCase()}:</strong> ${reg.titulo}<br>
+                <small>${new Date(reg.data).toLocaleDateString()}</small>
+            `;
+            lista.appendChild(div);
+        });
+    } catch (e) {
+        console.log("Erro ao carregar lista.");
+    }
+}
+
+    async function exportarPDF() {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        let header = currentMode === 'aula' ? 
+            `AULA: ${document.getElementById('titulo-aula').value}\nProfessor: ${document.getElementById('professor').value}` :
+            `SERMÃO: ${document.getElementById('tema-sermao').value}\nTexto: ${document.getElementById('texto-biblico').value}`;
+
+        doc.setFont("helvetica", "bold");
+        doc.text(header, 10, 20);
+        doc.setFont("helvetica", "normal");
+        
+        // O jsPDF simples não lê HTML complexo perfeitamente, 
+        // então usamos o método fromHTML ou o novo html()
+        const conteudo = quill.root.innerHTML;
+        
+        doc.html(quill.root, {
+            callback: function (doc) {
+                doc.save('documento_teologico.pdf');
+            },
+            margin: [40, 10, 10, 10],
+            autoPaging: 'text',
+            x: 10,
+            y: 40,
+            width: 180,
+            windowWidth: 675
+        });
+    }
+
+    carregarHistorico();
+    // Isso faz a lista carregar assim que você abre o site
+window.onload = carregarHistorico;
+</script>
+</body>
+</html>
